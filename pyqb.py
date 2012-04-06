@@ -119,4 +119,5 @@ class QuickBaseDB(QuickBaseInterface):
 
     def _get_schema(self):
         self.qbc.API_GetSchema(dbid=self.dbid, apptoken=True)
+        # TOOD: cache the table information locally to construct queries
 
