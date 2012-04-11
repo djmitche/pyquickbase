@@ -1,3 +1,6 @@
+..
+    Please keep one sentence per line, separating paragraphs with a blank line
+
 pyquickbase
 ===========
 
@@ -5,9 +8,7 @@ A Python interface to the `Quickbase API <http://www.quickbase.com/api-guide/whn
 
 This is currently very early-stage, but if it's useful to you, please extend and contribute back.
 
-The basic idea is that ``QuickBaseClient`` handles the API side of things,
-while ``QuickBaseInterface`` is a loose mapping over the objects (apps, dbs,
-tables, etc.) in quickbase.
+The basic idea is that ``QuickBaseClient`` handles the API side of things, while ``QuickBaseInterface`` is a loose mapping over the objects (apps, dbs, tables, etc.) in quickbase.
 
 License
 -------
