@@ -68,7 +68,9 @@ class QuickBaseClient(object):
             n = node.nodeName
             if n == '#text':
                 continue
-            res[n] = node.firstChild.nodeValue
+            fc = node.firstChild
+            if fc:
+                res[n] = fc.nodeValue
         res['xml'] = resxml
         log.debug('received Python:\n%r' % (res,))
 
@@ -84,17 +86,18 @@ class QuickBaseClient(object):
             raise AttributeError(k)
         return lambda **kwargs : self._request(k, **kwargs)
 
+
 class QuickBaseInterface(object):
 
     def __init__(self, qbc):
         self.qbc = qbc
+
 
 class QuickBaseRoot(QuickBaseInterface):
 
     def list_apps(self):
         res = self.qbc.API_GrantedDBs(excludeparents=0, withembeddedtables=0)
         dbs_xml = res['xml']
-        print dbs_xml.toprettyxml()
         dbs = {}
         for info in dbs_xml.getElementsByTagName('dbinfo'):
             name = info.getElementsByTagName('dbname')[0].firstChild.nodeValue
@@ -107,6 +110,7 @@ class QuickBaseRoot(QuickBaseInterface):
         res = self.qbc.API_FindDBByName(
                 dbname=dbname, ParentsOnly=1)
         return QuickBaseApp(self.qbc, res['dbid'])
+
 
 class QuickBaseApp(QuickBaseInterface):
 
@@ -136,6 +140,7 @@ class QuickBaseApp(QuickBaseInterface):
         else:
             return self.tables_by_name[tablename]
 
+
 class QuickBaseTable(QuickBaseInterface):
 
     def __init__(self, qbc, dbid):
@@ -143,18 +148,67 @@ class QuickBaseTable(QuickBaseInterface):
         self.dbid = dbid
         self._get_schema()
 
+    def list_fields(self):
+        return self.fields_by_name
+
+    def query(self, columns, condition):
+        info = self.qbc.API_DoQuery(dbid=self.dbid, apptoken=True,
+                query=condition, clist=columns, fmt='structured')['xml']
+        records = info.getElementsByTagName('records')[0]
+        return QuickBaseResultSet(records, self)
+
     def _get_schema(self):
         info = self.qbc.API_GetSchema(dbid=self.dbid, apptoken=True)['xml']
-        self.fields = {}
+        self.fields_by_name = {}
+        self.fields_by_fid = {}
         for elt in info.getElementsByTagName('field'):
             fld = QuickBaseField(elt)
-            self.fields[fld.name] = fld
+            self.fields_by_name[fld.name] = fld
+            self.fields_by_fid[fld.fid] = fld
+
 
 class QuickBaseField(object):
 
     def __init__(self, elt):
-        self.id = elt.getAttribute('id')
+        self.fid = int(elt.getAttribute('id'))
         self.base_type = elt.getAttribute('base_type')
         self.field_type = elt.getAttribute('field_type')
-        self.role = elt.getAttribute('role')
-        self.name = elt.getElementsByTagName('label')[0].firstChild.nodeValue
+        self.label = elt.getElementsByTagName('label')[0].firstChild.nodeValue
+        self.name = elt.getAttribute('role') or self.label
+
+
+class QuickBaseResultSet(object):
+
+    def __init__(self, records_elt, table):
+        self.records_elt = records_elt
+        self.table = table
+
+    def fetchall(self):
+        for elt in self.records_elt.getElementsByTagName('record'):
+            yield QuickBaseResultRow(elt, self.table)
+
+
+class QuickBaseResultRow(object):
+
+    def __init__(self, record_elt, table):
+        self.record_elt = record_elt
+        self.table = table
+        self._parse()
+
+    def _parse(self):
+        fields = {}
+        for elt in self.record_elt.getElementsByTagName('f'):
+            id = int(elt.getAttribute('id'))
+            val = elt.firstChild.nodeValue
+            fields[id] = val
+        self.fields = fields
+
+    def __getitem__(self, k):
+        if k in self.fields:
+            return self.fields[k]
+        # translate k to a fid
+        if k in self.table.fields_by_name:
+            fid = self.table.fields_by_name[k]
+            rv = self.fields[k] = self.fields[fid]
+            return rv
+        raise KeyError('no such field %r' % (k,))
