@@ -1,9 +1,10 @@
 from xml.dom import minidom
 import urllib2
+import logging
 
 class QuickBaseClient(object):
 
-    def __init__(self, domain, dbid='main', ticket=None, username=None, password=None, ticket_hours=8, apptoken=None, verbose=False):
+    def __init__(self, domain, dbid='main', ticket=None, username=None, password=None, ticket_hours=8, apptoken=None):
         self.domain = domain
         self.dbid = dbid
         self.ticket = ticket
@@ -11,7 +12,6 @@ class QuickBaseClient(object):
         self.password = password
         self.ticket_hours = ticket_hours
         self.apptoken = apptoken
-        self.verbose = verbose
 
     def _authenticate(self):
         if not self.username or not self.password:
@@ -27,14 +27,12 @@ class QuickBaseClient(object):
     def _request(self, action, _do_auth=True, **parameters_orig):
         parameters = parameters_orig.copy()
 
-        doc = minidom.Document()
-        api = doc.createElement("qdbapi")
-        doc.appendChild(api)
-
         if 'dbid' in parameters:
             dbid = parameters.pop('dbid')
         else:
             dbid = self.dbid
+        log = logging.getLogger('pyquickbase.%s' % dbid)
+        log.info('API call: ' + action)
 
         if _do_auth:
             if not self.ticket:
@@ -44,17 +42,19 @@ class QuickBaseClient(object):
         if 'apptoken' in parameters:
             parameters['apptoken'] = self.apptoken
 
+        doc = minidom.Document()
+        api = doc.createElement("qdbapi")
+        doc.appendChild(api)
         for k,v in parameters.iteritems():
             e = doc.createElement(k)
             e.appendChild(doc.createTextNode(str(v)))
             api.appendChild(e)
 
         xml = doc.toxml()
-        self._verb(xml)
         doc.unlink()
 
         url = 'https://%s/db/%s' % (self.domain, dbid)
-        self._verb(url)
+        log.debug('sending XML to %s:\n%s' % (url, xml))
         req = urllib2.Request(url, xml,
                 { 'quickbase-action' : action,
                   'content-type' : 'application/xml',
@@ -62,7 +62,7 @@ class QuickBaseClient(object):
         res = urllib2.urlopen(req)
 
         resxml = minidom.parse(res)
-        self._verb(resxml.toxml())
+        log.debug('received XML:\n%s' % (resxml,))
         res = {}
         for node in resxml.firstChild.childNodes:
             n = node.nodeName
@@ -70,7 +70,7 @@ class QuickBaseClient(object):
                 continue
             res[n] = node.firstChild.nodeValue
         res['xml'] = resxml
-        self._verb(res)
+        log.debug('received Python:\n%r' % (res,))
 
         # check for auth failed and retry (once)..
         if _do_auth and res.get('errcode', None) == '4':
@@ -78,10 +78,6 @@ class QuickBaseClient(object):
             return self._request(action, _do_auth=False, **parameters_orig)
 
         return res
-
-    def _verb(self, msg):
-        if self.verbose:
-            print msg
 
     def __getattr__(self, k):
         if not k.startswith('API_'):
