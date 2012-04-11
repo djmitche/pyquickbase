@@ -31,7 +31,7 @@ class QuickBaseClient(object):
             dbid = parameters.pop('dbid')
         else:
             dbid = self.dbid
-        log = logging.getLogger('pyquickbase.%s' % dbid)
+        log = logging.getLogger('pyquickbase.%s.%s' % (hex(id(self)), dbid))
         log.info('API call: ' + action)
 
         if _do_auth:
@@ -95,18 +95,38 @@ class QuickBaseInterface(object):
 
 class QuickBaseRoot(QuickBaseInterface):
 
-    def list_apps(self):
+    _apps_loaded = False
+    def _load_apps(self):
+        if self._apps_loaded:
+            return
         res = self.qbc.API_GrantedDBs(excludeparents=0, withembeddedtables=0)
         dbs_xml = res['xml']
-        dbs = {}
+        self._apps_by_name = {}
+        self._apps_by_dbid = {}
         for info in dbs_xml.getElementsByTagName('dbinfo'):
             name = info.getElementsByTagName('dbname')[0].firstChild.nodeValue
             dbid = info.getElementsByTagName('dbid')[0].firstChild.nodeValue
-            dbs[name] = QuickBaseApp(self.qbc, dbid)
-        return dbs
+            app = QuickBaseApp(self.qbc, dbid)
+            self._apps_by_name[name] = app
+            self._apps_by_dbid[dbid] = app
+        self._apps_loaded = True
 
-    def get_app(self, dbname, dbapi=None):
-        "look up dbname, or just access the given dbapi directly"
+    @property
+    def apps_by_name(self):
+        self._load_apps()
+        return self._apps_by_name
+
+    @property
+    def apps_by_dbid(self):
+        self._load_apps()
+        return self._apps_by_dbid
+
+    def get_app(self, dbname, dbid=None):
+        "look up dbname, or just access the given dbid directly"
+        if dbid:
+            return QuickBaseApp(self.qbc, dbid)
+
+        # search for it
         res = self.qbc.API_FindDBByName(
                 dbname=dbname, ParentsOnly=1)
         return QuickBaseApp(self.qbc, res['dbid'])
@@ -117,28 +137,39 @@ class QuickBaseApp(QuickBaseInterface):
     def __init__(self, qbc, dbid):
         QuickBaseInterface.__init__(self, qbc)
         self.dbid = dbid
-        self._get_schema()
 
-    def _get_schema(self):
+    _tables_loaded = False
+    def _load_tables(self):
+        if self._tables_loaded:
+            return
         info = self.qbc.API_GetSchema(dbid=self.dbid, apptoken=True)['xml']
-        self.tables_by_name = {}
-        self.tables_by_dbid = {}
+        self._tables_by_name = {}
+        self._tables_by_dbid = {}
         for elt in info.getElementsByTagName('chdbid'):
             name = elt.getAttribute('name')
             name = name.replace('_dbid_', '')
             dbid = elt.firstChild.nodeValue
-            self.tables_by_name[name] = QuickBaseTable(self.qbc, dbid)
-            self.tables_by_dbid[dbid] = QuickBaseTable(self.qbc, dbid)
+            tbl = QuickBaseTable(self.qbc, dbid)
+            self._tables_by_name[name] = tbl
+            self._tables_by_dbid[dbid] = tbl
 
-    def list_tables(self):
-        return self.tables_by_name
+    @property
+    def tables_by_name(self):
+        self._load_tables()
+        return self._tables_by_name
+
+    @property
+    def tables_by_dbid(self):
+        self._load_tables()
+        return self._tables_by_dbid
 
     def get_table(self, tablename, dbid=None):
-        "look up tablename in the app, or just access the given dbapi directly"
+        "look up tablename in the app, or just access the given dbid directly"
         if dbid:
-            return self.tables_by_dbid[dbid]
-        else:
-            return self.tables_by_name[tablename]
+            return self.QuickBaseTable(self.qbc, dbid)
+
+        # search for it
+        return self.tables_by_name[tablename]
 
 
 class QuickBaseTable(QuickBaseInterface):
@@ -146,25 +177,34 @@ class QuickBaseTable(QuickBaseInterface):
     def __init__(self, qbc, dbid):
         QuickBaseInterface.__init__(self, qbc)
         self.dbid = dbid
-        self._get_schema()
 
-    def list_fields(self):
-        return self.fields_by_name
+    _schema_loaded = False
+    def _load_schema(self):
+        if self._schema_loaded:
+            return
+        info = self.qbc.API_GetSchema(dbid=self.dbid, apptoken=True)['xml']
+        self._fields_by_name = {}
+        self._fields_by_fid = {}
+        for elt in info.getElementsByTagName('field'):
+            fld = QuickBaseField(elt)
+            self._fields_by_name[fld.name] = fld
+            self._fields_by_fid[fld.fid] = fld
+
+    @property
+    def fields_by_name(self):
+        self._load_schema()
+        return self._fields_by_name
+
+    @property
+    def fields_by_dbid(self):
+        self._load_schema()
+        return self._fields_by_dbid
 
     def query(self, columns, condition):
         info = self.qbc.API_DoQuery(dbid=self.dbid, apptoken=True,
                 query=condition, clist=columns, fmt='structured')['xml']
         records = info.getElementsByTagName('records')[0]
         return QuickBaseResultSet(records, self)
-
-    def _get_schema(self):
-        info = self.qbc.API_GetSchema(dbid=self.dbid, apptoken=True)['xml']
-        self.fields_by_name = {}
-        self.fields_by_fid = {}
-        for elt in info.getElementsByTagName('field'):
-            fld = QuickBaseField(elt)
-            self.fields_by_name[fld.name] = fld
-            self.fields_by_fid[fld.fid] = fld
 
 
 class QuickBaseField(object):
