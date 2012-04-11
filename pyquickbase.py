@@ -92,21 +92,23 @@ class QuickBaseInterface(object):
 class QuickBaseRoot(QuickBaseInterface):
 
     def list_apps(self):
-        res = self.qbc.API_GrantedDBs()
+        res = self.qbc.API_GrantedDBs(excludeparents=0, withembeddedtables=0)
         dbs_xml = res['xml']
+        print dbs_xml.toprettyxml()
         dbs = {}
         for info in dbs_xml.getElementsByTagName('dbinfo'):
             name = info.getElementsByTagName('dbname')[0].firstChild.nodeValue
             dbid = info.getElementsByTagName('dbid')[0].firstChild.nodeValue
-            dbs[name] = QuickBaseDB(self.qbc, dbid)
+            dbs[name] = QuickBaseApp(self.qbc, dbid)
         return dbs
 
-    def get_app(self, dbname):
+    def get_app(self, dbname, dbapi=None):
+        "look up dbname, or just access the given dbapi directly"
         res = self.qbc.API_FindDBByName(
                 dbname=dbname, ParentsOnly=1)
-        return QuickBaseDB(self.qbc, res['dbid'])
+        return QuickBaseApp(self.qbc, res['dbid'])
 
-class QuickBaseDB(QuickBaseInterface):
+class QuickBaseApp(QuickBaseInterface):
 
     def __init__(self, qbc, dbid):
         QuickBaseInterface.__init__(self, qbc)
@@ -114,6 +116,45 @@ class QuickBaseDB(QuickBaseInterface):
         self._get_schema()
 
     def _get_schema(self):
-        self.qbc.API_GetSchema(dbid=self.dbid, apptoken=True)
-        # TOOD: cache the table information locally to construct queries
+        info = self.qbc.API_GetSchema(dbid=self.dbid, apptoken=True)['xml']
+        self.tables_by_name = {}
+        self.tables_by_dbid = {}
+        for elt in info.getElementsByTagName('chdbid'):
+            name = elt.getAttribute('name')
+            name = name.replace('_dbid_', '')
+            dbid = elt.firstChild.nodeValue
+            self.tables_by_name[name] = QuickBaseTable(self.qbc, dbid)
+            self.tables_by_dbid[dbid] = QuickBaseTable(self.qbc, dbid)
 
+    def list_tables(self):
+        return self.tables_by_name
+
+    def get_table(self, tablename, dbid=None):
+        "look up tablename in the app, or just access the given dbapi directly"
+        if dbid:
+            return self.tables_by_dbid[dbid]
+        else:
+            return self.tables_by_name[tablename]
+
+class QuickBaseTable(QuickBaseInterface):
+
+    def __init__(self, qbc, dbid):
+        QuickBaseInterface.__init__(self, qbc)
+        self.dbid = dbid
+        self._get_schema()
+
+    def _get_schema(self):
+        info = self.qbc.API_GetSchema(dbid=self.dbid, apptoken=True)['xml']
+        self.fields = {}
+        for elt in info.getElementsByTagName('field'):
+            fld = QuickBaseField(elt)
+            self.fields[fld.name] = fld
+
+class QuickBaseField(object):
+
+    def __init__(self, elt):
+        self.id = elt.getAttribute('id')
+        self.base_type = elt.getAttribute('base_type')
+        self.field_type = elt.getAttribute('field_type')
+        self.role = elt.getAttribute('role')
+        self.name = elt.getElementsByTagName('label')[0].firstChild.nodeValue
